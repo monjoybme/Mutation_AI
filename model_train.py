@@ -7,10 +7,10 @@ from datetime import datetime
 from model import build_custom_resnet50
 
 # Hyperparameters
-BATCH_SIZE = 10
+BATCH_SIZE = 64
 TARGET_SIZE = (256, 256)
 NUM_CLASSES = 16
-EPOCHS = 30
+EPOCHS = 200
 LEARNING_RATE = 0.0001
 SAVE_RESULTS_PATH = './results/'
 TRAINED_MODEL_PATH = './trained_models/'
