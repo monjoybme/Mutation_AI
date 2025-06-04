@@ -1,4 +1,4 @@
-# Mutation_AI
+# Deep Learning for Molecular and Genomic Characterization of Lung Cancer in Never-Smokers Using Hematoxylin and Eosin-Stained Images
 
 Mutation_AI is a deep learning project for mutation analysis using Convolutional Neural Networks (CNNs) with two main modules:
 - `Multilabel_CNN`: For multi-label classification tasks.
