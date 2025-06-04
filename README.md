@@ -8,6 +8,10 @@ Both modules implement a custom ResNet-50-like architecture using TensorFlow/Ker
 
 ---
 
+![Deep Learning for Molecular and Genomic Characterization of Lung Cancer in Never-Smokers Using Hematoxylin and Eosin-Stained Images](banner.png)
+
+---
+
 ## Table of Contents
 
 - [Installation](#installation)
