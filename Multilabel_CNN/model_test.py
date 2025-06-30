@@ -1,53 +1,92 @@
 import pandas as pd
 import numpy as np
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from sklearn.metrics import roc_auc_score, classification_report, confusion_matrix
+import tensorflow as tf
 
+# --------------------------
 # Load trained model
-TRAINED_MODEL_PATH = './trained_models/custom_resnet50.hdf5'
-model = load_model(TRAINED_MODEL_PATH)
+# --------------------------
+model = tf.keras.models.load_model('./trained_models/custom_resnet50.keras', compile=False)
 
-# Load test data
-test_data = pd.read_csv('./data/test.csv')
-columns = ['EGFR', 'KRAS', 'TP53', 'RBM10', 'EGFR_pL591R', 'EGFR_pE479_A483del', 'KRAS_pG12C',
+# --------------------------
+# Load thresholds
+# --------------------------
+threshold_df = pd.read_csv('./results/optimal_thresholds.csv')
+thresholds_array = threshold_df['OptimalThreshold'].values
+
+# --------------------------
+# Load validation data (or test data if available)
+# --------------------------
+columns = ['EGFR', 'KRAS', 'TP53', 'RBM10', 'EGFR_p858R', 'EGFR_E746_A750del', 'KRAS_pG12C',
            'KRAS_pG12V', 'KRAS_pG12D', 'CDKN2A_deletion', 'MDM2_amplification', 'ALK_fusion',
            'WGD', 'Kataegis', 'APOBEC', 'TMB']
 
-# Test data generator
-test_datagen = ImageDataGenerator(rescale=1. / 255.)
-test_generator = test_datagen.flow_from_dataframe(
-    dataframe=test_data,
-    x_col="filename",
-    y_col=columns,
-    batch_size=1,
-    seed=42,
-    shuffle=False,
-    class_mode="raw",
-    target_size=(256, 256)
-)
+val_data = pd.read_csv('Final_VALIDATIONData_14March2025.csv')  # Adjust if using separate test data
 
-# Predictions
-predictions = model.predict(test_generator, verbose=1)
-y_pred = (predictions > 0.5).astype(int)
-y_true = test_data[columns].to_numpy()
+TARGET_SIZE = (256, 256)
 
-# Metrics
-def calc_metrics(y_true, y_pred):
-    acc = accuracy_score(y_true, y_pred)
-    macro_precision = precision_score(y_true, y_pred, average='macro')
-    macro_recall = recall_score(y_true, y_pred, average='macro')
-    macro_f1 = f1_score(y_true, y_pred, average='macro')
-    micro_precision = precision_score(y_true, y_pred, average='micro')
-    micro_recall = recall_score(y_true, y_pred, average='micro')
-    micro_f1 = f1_score(y_true, y_pred, average='micro')
-    return acc, macro_precision, macro_recall, macro_f1, micro_precision, micro_recall, micro_f1
+def load_val(filename, label):
+    img = tf.io.read_file(filename)
+    img = tf.image.decode_jpeg(img, channels=3)
+    img = tf.image.resize(img, TARGET_SIZE)
+    img = img / 255.0
+    return img, label
 
-metrics = calc_metrics(y_true, y_pred)
-print("Accuracy:", metrics[0])
-print("Macro Precision:", metrics[1])
-print("Macro Recall:", metrics[2])
-print("Macro F1 Score:", metrics[3])
-print("Micro Precision:", metrics[4])
-print("Micro Recall:", metrics[5])
-print("Micro F1 Score:", metrics[6])
+val_ds = tf.data.Dataset.from_tensor_slices((
+    val_data['filename'].values,
+    val_data[columns].values.astype(np.float32)
+))
+val_ds = val_ds.map(load_val, num_parallel_calls=tf.data.AUTOTUNE)
+val_ds = val_ds.batch(64).prefetch(tf.data.AUTOTUNE)
+
+# --------------------------
+# Run inference
+# --------------------------
+y_true = np.vstack([y for _, y in val_ds])
+y_pred_probs = model.predict(val_ds)
+
+# Apply thresholds
+y_pred_bin = (y_pred_probs >= thresholds_array).astype(int)
+
+# --------------------------
+# Calculate ROC AUC, Sensitivity, Specificity per label
+# --------------------------
+metrics = {
+    'Label': [],
+    'ROC_AUC': [],
+    'Sensitivity': [],   # Recall: TP/(TP+FN)
+    'Specificity': []    # TN/(TN+FP)
+}
+
+for i, col in enumerate(columns):
+    metrics['Label'].append(col)
+    # ROC AUC
+    try:
+        auc = roc_auc_score(y_true[:, i], y_pred_probs[:, i])
+    except ValueError:
+        auc = np.nan  # Only one class present in y_true[:, i]
+    metrics['ROC_AUC'].append(auc)
+
+    # Confusion matrix components for binary classification
+    tn, fp, fn, tp = confusion_matrix(y_true[:, i], y_pred_bin[:, i], labels=[0,1]).ravel()
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else np.nan
+
+    metrics['Sensitivity'].append(sensitivity)
+    metrics['Specificity'].append(specificity)
+
+    print(f"{col}: ROC AUC={auc:.4f}, Sensitivity={sensitivity:.4f}, Specificity={specificity:.4f}")
+
+# Save metrics
+metrics_df = pd.DataFrame(metrics)
+metrics_df.to_csv('./results/inference_metrics.csv', index=False)
+
+# --------------------------
+# Optional: Detailed classification report
+# --------------------------
+report = classification_report(y_true, y_pred_bin, target_names=columns, zero_division=0, output_dict=True)
+report_df = pd.DataFrame(report).transpose()
+report_df.to_csv('./results/classification_report.csv')
+
+print("\nMetrics saved to ./results/inference_metrics.csv")
+print("Classification report saved to ./results/classification_report.csv")
